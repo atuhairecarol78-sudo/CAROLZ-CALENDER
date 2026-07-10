@@ -17,6 +17,9 @@ import {
   Settings as SettingsIcon,
   X,
   RefreshCw,
+  Calendar,
+  Upload,
+  Download,
 } from 'lucide-react';
 
 import { CalendarEvent, CalendarView, ThemeType } from './types';
@@ -50,10 +53,27 @@ export default function App() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showJapaneseDays, setShowJapaneseDays] = useState(true);
+  const [mobileAgendaOpen, setMobileAgendaOpen] = useState(false);
   const [birthdayCelebration, setBirthdayCelebration] = useState<{ isOpen: boolean; name: string }>({
     isOpen: false,
     name: '',
   });
+
+  const [notification, setNotification] = useState<{ show: boolean; type: 'success' | 'error'; message: string }>({
+    show: false,
+    type: 'success',
+    message: '',
+  });
+
+  // Automatically clear notifications after 4 seconds
+  useEffect(() => {
+    if (notification.show) {
+      const timer = setTimeout(() => {
+        setNotification((prev) => ({ ...prev, show: false }));
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification.show]);
 
   // Load events from LocalStorage or fall back to defaults
   const [events, setEvents] = useState<CalendarEvent[]>(() => {
@@ -201,6 +221,91 @@ export default function App() {
     }
   };
 
+  // --- Export and Import Handlers ---
+  const handleExportEvents = () => {
+    try {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(events, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `calendar_events_${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      setNotification({ show: true, type: 'success', message: 'Events exported successfully!' });
+    } catch (e) {
+      console.error(e);
+      setNotification({ show: true, type: 'error', message: 'Failed to export events.' });
+    }
+  };
+
+  const handleImportEvents = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileReader = new FileReader();
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    fileReader.onload = (event) => {
+      try {
+        const imported = JSON.parse(event.target?.result as string);
+        if (Array.isArray(imported)) {
+          const validEvents: CalendarEvent[] = [];
+          for (const item of imported) {
+            if (
+              item &&
+              typeof item.id === 'string' &&
+              typeof item.title === 'string' &&
+              typeof item.date === 'string' &&
+              (item.type === 'birthday' || item.type === 'work' || item.type === 'personal' || item.type === 'important')
+            ) {
+              validEvents.push({
+                id: item.id,
+                title: item.title,
+                description: typeof item.description === 'string' ? item.description : undefined,
+                date: item.date,
+                type: item.type,
+                time: typeof item.time === 'string' ? item.time : undefined,
+              });
+            }
+          }
+
+          if (validEvents.length > 0) {
+            setEvents((prev) => {
+              const merged = [...prev];
+              let addedCount = 0;
+              let updatedCount = 0;
+
+              for (const vEvt of validEvents) {
+                const existingIdx = merged.findIndex((m) => m.id === vEvt.id);
+                if (existingIdx > -1) {
+                  merged[existingIdx] = vEvt;
+                  updatedCount++;
+                } else {
+                  merged.push(vEvt);
+                  addedCount++;
+                }
+              }
+              setNotification({ 
+                show: true, 
+                type: 'success', 
+                message: `Imported ${validEvents.length} events (${addedCount} added, ${updatedCount} updated).` 
+              });
+              return merged;
+            });
+          } else {
+            setNotification({ show: true, type: 'error', message: 'No valid calendar events found in the file.' });
+          }
+        } else {
+          setNotification({ show: true, type: 'error', message: 'Invalid file format. Must be a JSON array.' });
+        }
+      } catch (err) {
+        console.error(err);
+        setNotification({ show: true, type: 'error', message: 'Failed to parse JSON file.' });
+      }
+      e.target.value = '';
+    };
+
+    fileReader.readAsText(file);
+  };
+
   // --- Theme Configurations ---
   const themeConfig = {
     aqua: {
@@ -338,10 +443,11 @@ export default function App() {
     return (
       <div className="h-full flex flex-col justify-between">
         {/* Days of week header */}
-        <div className="grid grid-cols-7 text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-1">
+        <div className="grid grid-cols-7 text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 px-1 text-center">
           {ENGLISH_WEEKDAYS.map((en, idx) => (
-            <div key={en} className="flex flex-col">
-              <span>{en}</span>
+            <div key={en} className="flex flex-col items-center">
+              <span className="hidden md:inline">{en}</span>
+              <span className="inline md:hidden">{en.substring(0, 3)}</span>
               {showJapaneseDays && (
                 <span className="text-[8px] opacity-75 leading-none mt-0.5">
                   {JAPANESE_WEEKDAYS[idx]}
@@ -352,7 +458,7 @@ export default function App() {
         </div>
 
         {/* Days Grid */}
-        <div className={`grid grid-cols-7 border-t border-l ${currentTheme.borderAccent} bg-white/45 backdrop-blur-xs flex-1 min-h-[380px]`}>
+        <div className={`grid grid-cols-7 border-t border-l ${currentTheme.borderAccent} bg-white/45 backdrop-blur-xs flex-1 md:min-h-[380px] min-h-[280px]`}>
           {monthDays.map((day, idx) => {
             const isSelected = toDateString(day.date) === selectedDateStr;
             const hasEvents = day.events.length > 0;
@@ -367,7 +473,7 @@ export default function App() {
                     setCurrentDate(new Date(day.date.getFullYear(), day.date.getMonth(), 1));
                   }
                 }}
-                className={`p-2.5 border-r border-b ${currentTheme.borderAccent} text-left flex flex-col justify-between transition-all cursor-pointer outline-hidden group relative min-h-[75px] ${
+                className={`md:p-2.5 p-1.5 border-r border-b ${currentTheme.borderAccent} text-left flex flex-col justify-between transition-all cursor-pointer outline-hidden group relative md:min-h-[75px] min-h-[52px] ${
                   day.isCurrentMonth ? (theme === 'dark' ? 'text-slate-100' : 'text-slate-800') : (theme === 'dark' ? 'text-slate-700' : 'text-slate-300')
                 } ${
                   isSelected
@@ -379,13 +485,13 @@ export default function App() {
                 <div className="flex items-start justify-between w-full">
                   <span className={`text-sm font-black tracking-tight ${
                     day.isToday
-                      ? `inline-flex items-center justify-center w-6 h-6 rounded-md ${currentTheme.bgAccent} text-white font-extrabold`
+                      ? `inline-flex items-center justify-center w-5 h-5 md:w-6 md:h-6 rounded-md ${currentTheme.bgAccent} text-white font-extrabold`
                       : ''
                   }`}>
                     {pad(day.dayNum)}
                   </span>
                   {showJapaneseDays && (
-                    <span className="text-[8px] font-bold text-slate-400/80 uppercase font-mono mt-0.5 select-none">
+                    <span className="text-[8px] font-bold text-slate-400/80 uppercase font-mono mt-0.5 select-none hidden xs:inline">
                       {getKanjiDayNumber(day.dayNum)}
                     </span>
                   )}
@@ -393,28 +499,52 @@ export default function App() {
 
                 {/* Event previews inside cell */}
                 <div className="mt-1 w-full space-y-1 overflow-hidden">
-                  {dayEvents.slice(0, 2).map((evt) => (
-                    <div
-                      key={evt.id}
-                      className={`text-[8px] px-1 py-0.5 rounded-xs truncate font-bold flex items-center gap-0.5 ${
-                        evt.type === 'birthday'
-                          ? 'bg-amber-100 text-amber-800 border-l-2 border-amber-500'
-                          : evt.type === 'work'
-                          ? 'bg-sky-100 text-sky-800 border-l-2 border-sky-500'
-                          : evt.type === 'important'
-                          ? 'bg-purple-100 text-purple-800 border-l-2 border-purple-500'
-                          : 'bg-rose-100 text-rose-800 border-l-2 border-rose-500'
-                      }`}
-                    >
-                      <span className="shrink-0">{evt.type === 'birthday' ? '🎂' : '•'}</span>
-                      <span className="truncate">{evt.title}</span>
-                    </div>
-                  ))}
-                  {dayEvents.length > 2 && (
-                    <div className="text-[7px] font-black text-slate-400 pl-1">
-                      +{dayEvents.length - 2} more
-                    </div>
-                  )}
+                  {/* Desktop view list */}
+                  <div className="hidden md:block space-y-1">
+                    {dayEvents.slice(0, 2).map((evt) => (
+                      <div
+                        key={evt.id}
+                        className={`text-[8px] px-1 py-0.5 rounded-xs truncate font-bold flex items-center gap-0.5 ${
+                          evt.type === 'birthday'
+                            ? 'bg-amber-100 text-amber-800 border-l-2 border-amber-500'
+                            : evt.type === 'work'
+                            ? 'bg-sky-100 text-sky-800 border-l-2 border-sky-500'
+                            : evt.type === 'important'
+                            ? 'bg-purple-100 text-purple-800 border-l-2 border-purple-500'
+                            : 'bg-rose-100 text-rose-800 border-l-2 border-rose-500'
+                        }`}
+                      >
+                        <span className="shrink-0">{evt.type === 'birthday' ? '🎂' : '•'}</span>
+                        <span className="truncate">{evt.title}</span>
+                      </div>
+                    ))}
+                    {dayEvents.length > 2 && (
+                      <div className="text-[7px] font-black text-slate-400 pl-1">
+                        +{dayEvents.length - 2} more
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Mobile view event dots */}
+                  <div className="flex md:hidden gap-0.5 justify-center mt-0.5 flex-wrap">
+                    {dayEvents.slice(0, 3).map((evt) => (
+                      <span
+                        key={evt.id}
+                        className={`h-1 w-1 rounded-full ${
+                          evt.type === 'birthday'
+                            ? 'bg-amber-500'
+                            : evt.type === 'work'
+                            ? 'bg-sky-500'
+                            : evt.type === 'important'
+                            ? 'bg-purple-500'
+                            : 'bg-rose-500'
+                        }`}
+                      />
+                    ))}
+                    {dayEvents.length > 3 && (
+                      <span className="text-[6px] font-bold text-slate-400">+</span>
+                    )}
+                  </div>
                 </div>
               </button>
             );
@@ -620,7 +750,7 @@ export default function App() {
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1 py-1">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 md:gap-3 max-h-[420px] overflow-y-auto pr-1 py-1">
           {MONTH_NAMES.map((mName, mIdx) => {
             const isCurrentActiveMonth = currentMonth === mIdx;
             const monthEventsCount = events.filter((e) => {
@@ -672,13 +802,13 @@ export default function App() {
   };
 
   return (
-    <div className={`min-h-screen bg-slate-100 ${theme === 'dark' ? 'dark bg-slate-950' : ''} flex flex-col items-center justify-center py-6 px-4 select-none transition-colors duration-500`}>
+    <div className={`min-h-screen bg-slate-100 ${theme === 'dark' ? 'dark bg-slate-950' : ''} flex flex-col items-center justify-center md:py-6 md:px-4 p-0 select-none transition-colors duration-500`}>
       
       {/* Container simulating a premium high-fidelity desktop/tablet dashboard framework matching the Bold Typography spec */}
-      <div className={`w-full max-w-5xl h-[750px] bg-white dark:bg-slate-950 flex overflow-hidden font-sans ${theme === 'dark' ? 'text-slate-100 border-slate-800' : 'text-slate-800 border-white'} border-8 rounded-[36px] shadow-3xl relative transition-all`}>
+      <div className={`w-full max-w-5xl md:h-[750px] h-screen bg-white dark:bg-slate-950 flex flex-col md:flex-row overflow-hidden font-sans ${theme === 'dark' ? 'text-slate-100 border-slate-800' : 'text-slate-800 border-white'} md:border-8 md:rounded-[36px] rounded-none border-0 shadow-3xl relative transition-all`}>
         
-        {/* --- LEFT SIDEBAR NAVIGATION --- */}
-        <nav className={`w-24 bg-white dark:bg-slate-900 border-r ${theme === 'dark' ? 'border-slate-800' : 'border-slate-100'} flex flex-col items-center py-6 justify-between shrink-0`}>
+        {/* --- LEFT SIDEBAR NAVIGATION (DESKTOP ONLY) --- */}
+        <nav className={`hidden md:flex w-24 bg-white dark:bg-slate-900 border-r ${theme === 'dark' ? 'border-slate-800' : 'border-slate-100'} flex-col items-center py-6 justify-between shrink-0`}>
           {/* Theme colored logo indicator */}
           <button
             onClick={handleSelectToday}
@@ -773,7 +903,7 @@ export default function App() {
         </nav>
 
         {/* --- MAIN CALENDAR WORKSPACE AREA --- */}
-        <main className={`flex-1 flex flex-col relative px-10 py-8 ${currentTheme.gridPattern} transition-all overflow-y-auto`}>
+        <main className={`flex-1 flex flex-col relative md:px-10 md:py-8 px-4 py-5 pb-24 md:pb-8 ${currentTheme.gridPattern} transition-all overflow-y-auto`}>
           
           <AnimatePresence mode="wait">
             {!analyticsOpen && !settingsOpen ? (
@@ -786,13 +916,13 @@ export default function App() {
                 className="flex-1 flex flex-col justify-between"
               >
                 {/* Dynamic Watermarked Header */}
-                <header className="flex justify-between items-end mb-6 shrink-0 relative">
+                <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 mb-6 shrink-0 relative">
                   <div className="relative">
                     {/* The iconic massive absolute background month watermark matching the design */}
-                    <div className={`absolute -top-12 -left-6 ${currentTheme.textWatermark} text-[10rem] font-black select-none opacity-60 z-0 tracking-tighter leading-none`}>
+                    <div className={`absolute -top-12 -left-6 ${currentTheme.textWatermark} text-[6rem] sm:text-[10rem] font-black select-none opacity-60 z-0 tracking-tighter leading-none`}>
                       {pad(currentMonth + 1)}
                     </div>
-                    <h1 className="text-6xl font-black tracking-tighter leading-none relative z-10 uppercase select-all">
+                    <h1 className="text-4xl sm:text-6xl font-black tracking-tighter leading-none relative z-10 uppercase select-all">
                       {MONTH_NAMES[currentMonth]}
                       <span className={`${currentTheme.textAccent}`}>.</span>
                     </h1>
@@ -806,7 +936,7 @@ export default function App() {
                   </div>
 
                   {/* Top Navigation Row / Segmented tabs */}
-                  <div className="flex flex-col items-end gap-3 pb-1 z-10">
+                  <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto gap-3 pb-1 z-10">
                     {/* Navigation Arrows Cycle Stack */}
                     <div className="flex items-center gap-1.5">
                       <button
@@ -1027,6 +1157,35 @@ export default function App() {
                       </button>
                     </div>
 
+                    {/* Data Portability (Import/Export) option */}
+                    <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-105 dark:border-slate-800">
+                      <div className="mb-3">
+                        <h4 className="text-xs font-black uppercase text-slate-700 dark:text-slate-300">Data Portability</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Export your events as a backup or import them from a JSON file</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={handleExportEvents}
+                          className={`py-2 px-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${currentTheme.bgAccent} text-white ${currentTheme.bgAccentHover} shadow-sm`}
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Export JSON
+                        </button>
+                        <label
+                          className="py-2 px-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 shadow-sm text-center"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          Import JSON
+                          <input
+                            type="file"
+                            accept=".json"
+                            onChange={handleImportEvents}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+
                     {/* Reset button option */}
                     <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100">
                       <div>
@@ -1055,8 +1214,8 @@ export default function App() {
           </AnimatePresence>
         </main>
 
-        {/* --- RIGHT ACTION SIDEBAR --- */}
-        <aside className={`w-80 bg-white dark:bg-slate-900 border-l ${theme === 'dark' ? 'border-slate-800' : 'border-slate-100'} flex flex-col justify-between shrink-0`}>
+        {/* --- RIGHT ACTION SIDEBAR (DESKTOP ONLY) --- */}
+        <aside className={`hidden md:flex w-80 bg-white dark:bg-slate-900 border-l ${theme === 'dark' ? 'border-slate-800' : 'border-slate-100'} flex-col justify-between shrink-0`}>
           {/* Header title */}
           <div className="p-8 flex-1 flex flex-col justify-between overflow-y-auto">
             <div>
@@ -1154,6 +1313,201 @@ export default function App() {
           </div>
         </aside>
 
+        {/* --- BOTTOM NAVIGATION BAR (MOBILE ONLY) --- */}
+        <div className={`md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-slate-900 border-t ${theme === 'dark' ? 'border-slate-800' : 'border-slate-100'} flex justify-around items-center px-2 z-30 shadow-lg`}>
+          {/* Calendar Button */}
+          <button
+            onClick={() => {
+              setView('month');
+              setAnalyticsOpen(false);
+              setSettingsOpen(false);
+              setMobileAgendaOpen(false);
+            }}
+            className={`flex flex-col items-center justify-center w-14 h-12 transition-all cursor-pointer ${
+              !analyticsOpen && !settingsOpen && !mobileAgendaOpen ? currentTheme.textAccent : 'text-slate-400'
+            }`}
+          >
+            <Calendar className="w-5 h-5" />
+            <span className="text-[9px] font-black uppercase tracking-wider mt-0.5">Calendar</span>
+          </button>
+
+          {/* Agenda Bottom Sheet Trigger Button */}
+          <button
+            onClick={() => {
+              setMobileAgendaOpen(true);
+              setAnalyticsOpen(false);
+              setSettingsOpen(false);
+            }}
+            className={`flex flex-col items-center justify-center w-14 h-12 transition-all cursor-pointer ${
+              mobileAgendaOpen ? currentTheme.textAccent : 'text-slate-400'
+            }`}
+          >
+            <Clock className="w-5 h-5" />
+            <span className="text-[9px] font-black uppercase tracking-wider mt-0.5">Agenda</span>
+          </button>
+
+          {/* Analytics Button */}
+          <button
+            onClick={() => {
+              setAnalyticsOpen(true);
+              setSettingsOpen(false);
+              setMobileAgendaOpen(false);
+            }}
+            className={`flex flex-col items-center justify-center w-14 h-12 transition-all cursor-pointer ${
+              analyticsOpen ? currentTheme.textAccent : 'text-slate-400'
+            }`}
+          >
+            <BarChart3 className="w-5 h-5" />
+            <span className="text-[9px] font-black uppercase tracking-wider mt-0.5">Analytics</span>
+          </button>
+
+          {/* Settings Button */}
+          <button
+            onClick={() => {
+              setSettingsOpen(true);
+              setAnalyticsOpen(false);
+              setMobileAgendaOpen(false);
+            }}
+            className={`flex flex-col items-center justify-center w-14 h-12 transition-all cursor-pointer ${
+              settingsOpen ? currentTheme.textAccent : 'text-slate-400'
+            }`}
+          >
+            <SettingsIcon className="w-5 h-5" />
+            <span className="text-[9px] font-black uppercase tracking-wider mt-0.5">Settings</span>
+          </button>
+        </div>
+
+        {/* Floating Action Button (FAB) for adding event on mobile */}
+        <button
+          onClick={() => setModalOpen(true)}
+          className={`md:hidden fixed bottom-20 right-4 w-14 h-14 rounded-full text-white flex items-center justify-center shadow-2xl active:scale-95 transition-all z-20 ${currentTheme.bgAccent} ${currentTheme.bgAccentHover} shadow-cyan-500/20`}
+          title="Add New Event"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+
+        {/* --- MOBILE AGENDA SLIDE-UP SHEET --- */}
+        <AnimatePresence>
+          {mobileAgendaOpen && (
+            <>
+              {/* Backdrop */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 0.5 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setMobileAgendaOpen(false)}
+                className="md:hidden fixed inset-0 bg-black/60 z-40 backdrop-blur-xs"
+              />
+              {/* Sheet */}
+              <motion.div
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                className="md:hidden fixed bottom-0 left-0 right-0 max-h-[75vh] bg-white dark:bg-slate-900 rounded-t-[32px] border-t border-slate-100 dark:border-slate-800 z-50 overflow-y-auto p-6 shadow-2xl pb-24"
+              >
+                {/* Visual handle pill */}
+                <div 
+                  onClick={() => setMobileAgendaOpen(false)}
+                  className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mb-6 cursor-pointer" 
+                />
+                
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Selected Agenda Date</span>
+                    <h3 className={`text-base font-black ${currentTheme.textAccent}`}>
+                      {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                    </h3>
+                    {showJapaneseDays && (
+                      <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                        {selectedDate.getFullYear()}年{selectedDate.getMonth() + 1}月{selectedDate.getDate()}日 ({getWeekdayName(selectedDate, 'ja')})
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setMobileAgendaOpen(false)}
+                    className="p-2 rounded-full bg-slate-100 dark:bg-slate-850 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Agenda Events */}
+                <div className="space-y-6">
+                  {selectedDayEvents.length === 0 ? (
+                    <div className="py-12 text-center bg-slate-50 dark:bg-slate-800/20 rounded-2xl border-2 border-dashed border-slate-100 dark:border-slate-800">
+                      <span className="text-xs text-slate-400 font-medium block">No logged events for this day</span>
+                      <button
+                        onClick={() => {
+                          setMobileAgendaOpen(false);
+                          setModalOpen(true);
+                        }}
+                        className={`text-xs font-black uppercase tracking-wider ${currentTheme.textAccent} mt-2 hover:underline cursor-pointer`}
+                      >
+                        + Add Event
+                      </button>
+                    </div>
+                  ) : (
+                    selectedDayEvents.map((evt) => (
+                      <div
+                        key={evt.id}
+                        onClick={() => {
+                          if (evt.type === 'birthday') triggerBirthdayAnimation(evt.title);
+                          setMobileAgendaOpen(false);
+                        }}
+                        className="relative transition-transform cursor-pointer border-b border-slate-100 dark:border-slate-800 pb-4"
+                      >
+                        <span className="text-5xl font-black absolute -top-4 -left-1 opacity-5 text-slate-900 dark:text-white select-none pointer-events-none z-0">
+                          {pad(new Date(evt.date).getDate())}
+                        </span>
+                        
+                        <div className="relative z-10 pl-1 flex items-start justify-between">
+                          <div className="min-w-0 pr-2">
+                            <div className={`text-[9px] font-black uppercase tracking-wider mb-0.5 ${currentTheme.textAccent}`}>
+                              {evt.time ? `${evt.time} • ` : ''} {evt.type.toUpperCase()}
+                            </div>
+                            <h4 className="text-sm font-black leading-tight text-slate-800 dark:text-slate-100 truncate flex items-center gap-1.5">
+                              {evt.type === 'birthday' ? '🎂' : ''} {evt.title}
+                            </h4>
+                            {evt.description && (
+                              <p className="text-[10px] text-slate-400 mt-1">
+                                {evt.description}
+                              </p>
+                            )}
+                          </div>
+
+                          <button
+                            onClick={(e) => {
+                              handleDeleteEvent(evt.id, e);
+                            }}
+                            className="p-2 rounded-md text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors shrink-0 outline-hidden"
+                            title="Delete Event"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Add event helper in drawer */}
+                <div className="mt-8">
+                  <button
+                    onClick={() => {
+                      setMobileAgendaOpen(false);
+                      setModalOpen(true);
+                    }}
+                    className={`w-full py-4 text-white font-black uppercase text-xs tracking-widest rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${currentTheme.bgAccent} ${currentTheme.bgAccentHover}`}
+                  >
+                    <span className="text-base font-bold">+</span> Add Event to Date
+                  </button>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
       </div>
 
       {/* Action form modal */}
@@ -1170,6 +1524,35 @@ export default function App() {
         isOpen={birthdayCelebration.isOpen}
         onClose={() => setBirthdayCelebration({ isOpen: false, name: '' })}
       />
+
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {notification.show && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-2xl border font-sans text-xs font-black uppercase tracking-wider ${
+              notification.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/90 dark:border-emerald-800 dark:text-emerald-200'
+                : 'bg-rose-50 border-rose-200 text-rose-800 dark:bg-rose-950/90 dark:border-rose-800 dark:text-rose-200'
+            }`}
+          >
+            {notification.type === 'success' ? (
+              <span className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs shrink-0">✓</span>
+            ) : (
+              <span className="w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold text-xs shrink-0">!</span>
+            )}
+            <span className="whitespace-nowrap">{notification.message}</span>
+            <button
+              onClick={() => setNotification((prev) => ({ ...prev, show: false }))}
+              className="ml-3 hover:opacity-75 cursor-pointer text-slate-400 dark:text-slate-300 font-bold"
+            >
+              ✕
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
