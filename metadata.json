@@ -1,0 +1,6 @@
+{
+  "name": "Aqua Calendar",
+  "description": "An elegant, multi-view calendar application featuring an aqua design, event management for birthdays and milestones, and support for Day, Week, Month, and Year navigation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
